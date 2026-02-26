@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Bishop Heber College - Smart Campus Dashboard</title>
+  <meta charset="utf-8" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <style>
+    body { margin: 0; }
+    #map { height: 100vh; }
+  </style>
+</head>
+
+<body>
+
+<div id="map"></div>
+
+<script>
+
+  // 📍 Center at Bishop Heber College
+  var map = L.map('map').setView([10.8150, 78.6855], 17);
+
+  // 🌍 OpenStreetMap Layer
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  ////////////////////////////////////////////////////////////
+  // 🏫 Bishop Heber College Campus Polygon
+  ////////////////////////////////////////////////////////////
+
+var campusPolygon = L.polygon([
+  [10.816112, 78.673231],
+  [10.816724, 78.673584],
+  [10.817008, 78.674302],
+  [10.816893, 78.675114],
+  [10.816221, 78.675643],
+  [10.815339, 78.675721],
+  [10.814601, 78.675480],
+  [10.813975, 78.674942],
+  [10.813621, 78.674141],
+  [10.813852, 78.673402],
+  [10.814734, 78.673063],
+  [10.815623, 78.673098]
+], {
+  color: '#006400',
+  fillColor: '#00cc44',
+  fillOpacity: 0.35,
+  weight: 3
+}).addTo(map);
+
+map.fitBounds(campusPolygon.getBounds());
+
+map.fitBounds(campusPolygon.getBounds());
+
+  map.fitBounds(campusPolygon.getBounds());
+
+  ////////////////////////////////////////////////////////////
+  // 🎯 Student Markers
+  ////////////////////////////////////////////////////////////
+
+  var markers = {};
+
+  function loadLocations() {
+    fetch('/get_locations')
+      .then(response => response.json())
+      .then(data => {
+
+        data.forEach(student => {
+
+          var color = student.inside_campus ? "green" : "red";
+
+          var icon = L.icon({
+            iconUrl: color === "green"
+              ? "https://maps.google.com/mapfiles/ms/icons/green-dot.png"
+              : "https://maps.google.com/mapfiles/ms/icons/red-dot.png",
+            iconSize: [32, 32],
+            iconAnchor: [16, 32]
+          });
+
+          if (markers[student.student_id]) {
+
+            // 🔄 Move existing marker
+            markers[student.student_id]
+              .setLatLng([student.latitude, student.longitude])
+              .setIcon(icon)
+              .update();
+
+          } else {
+
+            // ➕ Create new marker
+            markers[student.student_id] = L.marker(
+              [student.latitude, student.longitude],
+              { icon: icon }
+            ).addTo(map);
+
+          }
+
+          markers[student.student_id]
+            .bindPopup(
+              "<b>Roll No:</b> " + student.student_id +
+              "<br>Status: " +
+              (student.inside_campus ? "🟢 Inside Campus" : "🔴 Outside Campus")
+            );
+        });
+
+      })
+      .catch(error => console.log("Error loading locations:", error));
+  }
+
+  // Initial Load
+  loadLocations();
+
+  // 🔄 Refresh Every 5 Seconds
+  setInterval(loadLocations, 5000);
+
+</script>
+
+</body>
+</html>
