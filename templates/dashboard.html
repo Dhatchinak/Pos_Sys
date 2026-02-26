@@ -1,15 +1,29 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Bishop Heber College - Smart Campus Dashboard</title>
+  <title>BHC Smart Campus - Live Tracking</title>
   <meta charset="utf-8" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-rotatedmarker/leaflet.rotatedMarker.js"></script>
 
   <style>
     body { margin: 0; }
     #map { height: 100vh; }
+
+    .status-box {
+      position: absolute;
+      inset-block-start: 10px;
+      left: 10px;
+      background: white;
+      padding: 10px 15px;
+      border-radius: 8px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+      z-index: 1000;
+      font-family: Arial;
+      font-size: 14px;
+    }
   </style>
 </head>
 
@@ -17,104 +31,167 @@
 
 <div id="map"></div>
 
+<div class="status-box">
+  <b>Live Student Tracking</b><br>
+  🟢 Inside: <span id="insideCount">0</span><br>
+  🔴 Outside: <span id="outsideCount">0</span>
+</div>
+
 <script>
 
-  // 📍 Center at Bishop Heber College
+  //////////////////////////////////////////////////////
+  // 📍 MAP SETUP
+  //////////////////////////////////////////////////////
+
   var map = L.map('map').setView([10.8150, 78.6855], 17);
 
-  // 🌍 OpenStreetMap Layer
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
   }).addTo(map);
 
-  ////////////////////////////////////////////////////////////
-  // 🏫 Bishop Heber College Campus Polygon
-  ////////////////////////////////////////////////////////////
+  //////////////////////////////////////////////////////
+  // 🏫 Campus Polygon
+  //////////////////////////////////////////////////////
 
-var campusPolygon = L.polygon([
-  [10.816112, 78.673231],
-  [10.816724, 78.673584],
-  [10.817008, 78.674302],
-  [10.816893, 78.675114],
-  [10.816221, 78.675643],
-  [10.815339, 78.675721],
-  [10.814601, 78.675480],
-  [10.813975, 78.674942],
-  [10.813621, 78.674141],
-  [10.813852, 78.673402],
-  [10.814734, 78.673063],
-  [10.815623, 78.673098]
-], {
-  color: '#006400',
-  fillColor: '#00cc44',
-  fillOpacity: 0.35,
-  weight: 3
-}).addTo(map);
-
-map.fitBounds(campusPolygon.getBounds());
-
-map.fitBounds(campusPolygon.getBounds());
+  var campusPolygon = L.polygon([
+    [10.816112, 78.673231],
+    [10.816724, 78.673584],
+    [10.817008, 78.674302],
+    [10.816893, 78.675114],
+    [10.816221, 78.675643],
+    [10.815339, 78.675721],
+    [10.814601, 78.675480],
+    [10.813975, 78.674942],
+    [10.813621, 78.674141],
+    [10.813852, 78.673402],
+    [10.814734, 78.673063],
+    [10.815623, 78.673098]
+  ], {
+    color: '#006400',
+    fillColor: '#00cc44',
+    fillOpacity: 0.25,
+    weight: 3
+  }).addTo(map);
 
   map.fitBounds(campusPolygon.getBounds());
 
-  ////////////////////////////////////////////////////////////
-  // 🎯 Student Markers
-  ////////////////////////////////////////////////////////////
+  //////////////////////////////////////////////////////
+  // 🎯 Tracking Logic
+  //////////////////////////////////////////////////////
 
   var markers = {};
+  var paths = {};
+
+  function getAngle(from, to) {
+    var dy = to.lat - from.lat;
+    var dx = to.lng - from.lng;
+    var theta = Math.atan2(dy, dx);
+    theta *= 180 / Math.PI;
+    return theta;
+  }
+
+  function animateMarker(marker, newLatLng) {
+    var start = marker.getLatLng();
+    var duration = 1000;
+    var startTime = performance.now();
+
+    function animate(time) {
+      var progress = (time - startTime) / duration;
+      if (progress > 1) progress = 1;
+
+      var lat = start.lat + (newLatLng.lat - start.lat) * progress;
+      var lng = start.lng + (newLatLng.lng - start.lng) * progress;
+
+      marker.setLatLng([lat, lng]);
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    }
+
+    requestAnimationFrame(animate);
+  }
 
   function loadLocations() {
     fetch('/get_locations')
       .then(response => response.json())
       .then(data => {
 
+        var insideCount = 0;
+        var outsideCount = 0;
+
         data.forEach(student => {
 
-          var color = student.inside_campus ? "green" : "red";
+          var isInside = student.inside_campus;
+          var newLatLng = L.latLng(student.latitude, student.longitude);
 
-          var icon = L.icon({
-            iconUrl: color === "green"
-              ? "https://maps.google.com/mapfiles/ms/icons/green-dot.png"
-              : "https://maps.google.com/mapfiles/ms/icons/red-dot.png",
-            iconSize: [32, 32],
-            iconAnchor: [16, 32]
+          if (isInside) insideCount++;
+          else outsideCount++;
+
+          var arrowIcon = L.divIcon({
+            html: `<div style="
+              width:0;
+              height:0;
+              border-left:10px solid transparent;
+              border-right:10px solid transparent;
+              border-bottom:20px solid ${isInside ? '#28a745' : '#dc3545'};
+              filter: drop-shadow(0 0 5px rgba(0,0,0,0.5));
+            "></div>`,
+            className: "",
+            iconSize: [20, 20]
           });
 
           if (markers[student.student_id]) {
 
-            // 🔄 Move existing marker
+            var oldLatLng = markers[student.student_id].getLatLng();
+            var angle = getAngle(oldLatLng, newLatLng);
+
             markers[student.student_id]
-              .setLatLng([student.latitude, student.longitude])
-              .setIcon(icon)
-              .update();
+              .setIcon(arrowIcon)
+              .setRotationAngle(angle);
+
+            animateMarker(markers[student.student_id], newLatLng);
+
+            // Add to trail path
+            paths[student.student_id].addLatLng(newLatLng);
 
           } else {
 
-            // ➕ Create new marker
-            markers[student.student_id] = L.marker(
-              [student.latitude, student.longitude],
-              { icon: icon }
-            ).addTo(map);
+            markers[student.student_id] = L.marker(newLatLng, {
+              icon: arrowIcon,
+              rotationAngle: 0
+            }).addTo(map);
 
+            paths[student.student_id] = L.polyline([newLatLng], {
+              color: isInside ? "green" : "red",
+              weight: 3
+            }).addTo(map);
           }
 
           markers[student.student_id]
             .bindPopup(
-              "<b>Roll No:</b> " + student.student_id +
-              "<br>Status: " +
-              (student.inside_campus ? "🟢 Inside Campus" : "🔴 Outside Campus")
+              `<b>Student ID:</b> ${student.student_id}<br>
+               <b>Status:</b> ${
+                 isInside
+                   ? "<span style='color:green;'>Inside Campus</span>"
+                   : "<span style='color:red;'>Outside Campus</span>"
+               }`
             );
         });
 
+        document.getElementById("insideCount").innerText = insideCount;
+        document.getElementById("outsideCount").innerText = outsideCount;
+
       })
-      .catch(error => console.log("Error loading locations:", error));
+      .catch(error => console.log("Error:", error));
   }
 
-  // Initial Load
-  loadLocations();
+  //////////////////////////////////////////////////////
+  // 🚀 Start Tracking
+  //////////////////////////////////////////////////////
 
-  // 🔄 Refresh Every 5 Seconds
-  setInterval(loadLocations, 5000);
+  loadLocations();
+  setInterval(loadLocations, 1000);
 
 </script>
 

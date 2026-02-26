@@ -1,3 +1,5 @@
+import datetime
+
 import certifi
 
 from flask import Flask, render_template, jsonify
@@ -61,17 +63,19 @@ def get_locations():
 
     return jsonify(students)
 
+from datetime import datetime
 
 @app.route("/update_location", methods=["POST"])
 def update_location():
     data = request.json
-    print("Received:", data)  
+    print("Received:", data)
+
     student_id = data.get("student_id")
     latitude = data.get("latitude")
     longitude = data.get("longitude")
 
     if not student_id or latitude is None or longitude is None:
-        return jsonify({"status": "error"}), 400
+        return jsonify({"status": "error", "message": "Invalid data"}), 400
 
     locations_collection.update_one(
         {"student_id": student_id},
@@ -79,13 +83,16 @@ def update_location():
             "$set": {
                 "student_id": student_id,
                 "latitude": latitude,
-                "longitude": longitude
+                "longitude": longitude,
+                "updated_at": datetime.utcnow()
             }
         },
         upsert=True
     )
 
     return jsonify({"status": "success"})
+
+    # return jsonify({"status": "success"})
 
 
 if __name__ == "__main__":
