@@ -16,7 +16,6 @@ MONGO_URI = "mongodb+srv://dhatchinak05_db_user:Dhatchina05@cluster0.d1uhy06.mon
 
 client = MongoClient(MONGO_URI,tlsCAFile =certifi.where(),tls=True,tlsAllowInvalidCertificates=True)
 
-# Test connection
 try:
     client.admin.command('ping')
     print("MongoDB Connected Successfully ✅")
@@ -26,9 +25,7 @@ except Exception as e:
 db = client["smart_campus"]
 locations_collection = db["locations"]
 
-# --------------------------
 # Geofence Settings
-# --------------------------
 CAMPUS_LAT = 11.0168
 CAMPUS_LNG = 76.9558
 RADIUS = 1000  
@@ -92,7 +89,6 @@ def update_location():
 
     return jsonify({"status": "success"})
 
-    # return jsonify({"status": "success"})
 
 
 if __name__ == "__main__":

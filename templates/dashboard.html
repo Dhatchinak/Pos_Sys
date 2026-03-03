@@ -1,199 +1,187 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>BHC Smart Campus - Live Tracking</title>
+  <title>BHC Smart Campus — Live Tracking</title>
   <meta charset="utf-8" />
-
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-rotatedmarker/leaflet.rotatedMarker.js"></script>
-
   <style>
-    body { margin: 0; }
-    #map { height: 100vh; }
-
-    .status-box {
-      position: absolute;
-      inset-block-start: 10px;
-      left: 10px;
-      background: white;
-      padding: 10px 15px;
-      border-radius: 8px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-      z-index: 1000;
-      font-family: Arial;
-      font-size: 14px;
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'DM Sans', sans-serif; background: #0a0f1e; }
+    #map { height: 100vh; width: 100vw; filter: brightness(0.92) saturate(1.1); }
+    .hud {
+      position: absolute; top: 16px; right: 16px; z-index: 1000;
+      display: flex; flex-direction: column; gap: 10px; width: 220px;
     }
+    .hud-header {
+      background: rgba(10,15,30,0.92); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px; padding: 14px 16px; backdrop-filter: blur(12px);
+    }
+    .hud-title {
+      font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: rgba(255,255,255,0.5); margin-bottom: 12px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: #22c55e;
+      animation: sonar 1.5s infinite;
+    }
+    @keyframes sonar {
+      0%   { box-shadow: 0 0 0 0   rgba(34,197,94,0.6); }
+      70%  { box-shadow: 0 0 0 8px rgba(34,197,94,0);   }
+      100% { box-shadow: 0 0 0 0   rgba(34,197,94,0);   }
+    }
+    .stat-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 12px; border-radius: 10px; margin-bottom: 6px;
+    }
+    .stat-row:last-child { margin-bottom: 0; }
+    .stat-inside  { background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.25); }
+    .stat-outside { background: rgba(239,68,68,0.10); border: 1px solid rgba(239,68,68,0.22); }
+    .stat-label { font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 7px; }
+    .stat-inside  .stat-label { color: #86efac; }
+    .stat-outside .stat-label { color: #fca5a5; }
+    .stat-icon { width: 8px; height: 8px; border-radius: 50%; }
+    .stat-inside  .stat-icon { background: #22c55e; animation: sonar 1.5s infinite; }
+    .stat-outside .stat-icon { background: #ef4444; }
+    .stat-count { font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 800; }
+    .stat-inside  .stat-count { color: #22c55e; }
+    .stat-outside .stat-count { color: #ef4444; }
+    .hud-note, .hud-time {
+      background: rgba(10,15,30,0.82); border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px; padding: 8px 12px; font-size: 11px;
+      color: rgba(255,255,255,0.35); text-align: center; backdrop-filter: blur(8px);
+    }
+    .hud-time { color: rgba(255,255,255,0.4); font-variant-numeric: tabular-nums; }
+    .leaflet-popup-content-wrapper {
+      background: #0d1526 !important; border: 1px solid rgba(255,255,255,0.1) !important;
+      color: #e2e8f0 !important; border-radius: 10px !important;
+      font-family: 'DM Sans', sans-serif !important; font-size: 13px !important;
+    }
+    .leaflet-popup-tip { background: #0d1526 !important; }
+    .leaflet-popup-content { margin: 12px 14px !important; line-height: 1.9 !important; }
   </style>
 </head>
-
 <body>
-
 <div id="map"></div>
-
-<div class="status-box">
-  <b>Live Student Tracking</b><br>
-  🟢 Inside: <span id="insideCount">0</span><br>
-  🔴 Outside: <span id="outsideCount">0</span>
+<div class="hud">
+  <div class="hud-header">
+    <div class="hud-title"><span class="live-dot"></span>Live Campus</div>
+    <div class="stat-row stat-inside">
+      <span class="stat-label"><span class="stat-icon"></span>Inside</span>
+      <span class="stat-count" id="insideCount">0</span>
+    </div>
+    <div class="stat-row stat-outside">
+      <span class="stat-label"><span class="stat-icon"></span>Outside</span>
+      <span class="stat-count" id="outsideCount">0</span>
+    </div>
+  </div>
+  <div class="hud-note">Only inside students shown on map</div>
+  <div class="hud-time" id="lastUpdate">Connecting...</div>
 </div>
-
 <script>
-
-  //////////////////////////////////////////////////////
-  // 📍 MAP SETUP
-  //////////////////////////////////////////////////////
-
-  var map = L.map('map').setView([10.8150, 78.6855], 17);
-
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors'
+  const map = L.map('map',{zoomControl:true}).setView([10.8150,78.6855],17);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+    attribution:'© OpenStreetMap © CARTO',maxZoom:20,subdomains:'abcd'
   }).addTo(map);
 
-  //////////////////////////////////////////////////////
-  // 🏫 Campus Polygon
-  //////////////////////////////////////////////////////
+  const BOUNDS=[
+    [10.816112,78.673231],[10.816724,78.673584],[10.817008,78.674302],
+    [10.816893,78.675114],[10.816221,78.675643],[10.815339,78.675721],
+    [10.814601,78.675480],[10.813975,78.674942],[10.813621,78.674141],
+    [10.813852,78.673402],[10.814734,78.673063],[10.815623,78.673098]
+  ];
+  L.polygon(BOUNDS,{color:'#22c55e',fillColor:'#22c55e',fillOpacity:0.07,weight:2,dashArray:'6 4'}).addTo(map);
+  map.fitBounds(L.polygon(BOUNDS).getBounds(),{padding:[30,30]});
 
-  var campusPolygon = L.polygon([
-    [10.816112, 78.673231],
-    [10.816724, 78.673584],
-    [10.817008, 78.674302],
-    [10.816893, 78.675114],
-    [10.816221, 78.675643],
-    [10.815339, 78.675721],
-    [10.814601, 78.675480],
-    [10.813975, 78.674942],
-    [10.813621, 78.674141],
-    [10.813852, 78.673402],
-    [10.814734, 78.673063],
-    [10.815623, 78.673098]
-  ], {
-    color: '#006400',
-    fillColor: '#00cc44',
-    fillOpacity: 0.25,
-    weight: 3
-  }).addTo(map);
+  const markers={}, paths={}, trailPts={};
+  const TRAIL_MAX=50, POLL_MS=800;
 
-  map.fitBounds(campusPolygon.getBounds());
-
-  //////////////////////////////////////////////////////
-  // 🎯 Tracking Logic
-  //////////////////////////////////////////////////////
-
-  var markers = {};
-  var paths = {};
-
-  function getAngle(from, to) {
-    var dy = to.lat - from.lat;
-    var dx = to.lng - from.lng;
-    var theta = Math.atan2(dy, dx);
-    theta *= 180 / Math.PI;
-    return theta;
+  function arrowIcon(){
+    return L.divIcon({
+      className:'', iconSize:[26,26], iconAnchor:[13,13],
+      html:`<svg width="26" height="26" viewBox="0 0 26 26" xmlns="http://www.w3.org/2000/svg">
+        <defs><filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="2.5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter></defs>
+        <polygon points="13,2 22,22 13,16 4,22" fill="#22c55e" stroke="#fff"
+          stroke-width="1.5" stroke-linejoin="round" filter="url(#glow)"/>
+      </svg>`
+    });
   }
 
-  function animateMarker(marker, newLatLng) {
-    var start = marker.getLatLng();
-    var duration = 1000;
-    var startTime = performance.now();
-
-    function animate(time) {
-      var progress = (time - startTime) / duration;
-      if (progress > 1) progress = 1;
-
-      var lat = start.lat + (newLatLng.lat - start.lat) * progress;
-      var lng = start.lng + (newLatLng.lng - start.lng) * progress;
-
-      marker.setLatLng([lat, lng]);
-
-      if (progress < 1) {
-        requestAnimationFrame(animate);
-      }
-    }
-
-    requestAnimationFrame(animate);
+  function smoothMove(marker,to){
+    const from=marker.getLatLng(), t0=performance.now(), dur=700;
+    (function step(now){
+      const p=Math.min((now-t0)/dur,1), ep=1-Math.pow(1-p,3);
+      marker.setLatLng([from.lat+(to.lat-from.lat)*ep, from.lng+(to.lng-from.lng)*ep]);
+      if(p<1) requestAnimationFrame(step);
+    })(performance.now());
   }
 
-  function loadLocations() {
+  function heading(a,b){ return Math.atan2(b.lat-a.lat,b.lng-a.lng)*180/Math.PI; }
+
+  function removeStudent(id){
+    if(markers[id]){map.removeLayer(markers[id]);delete markers[id];}
+    if(paths[id]){map.removeLayer(paths[id]);delete paths[id];}
+    delete trailPts[id];
+  }
+
+  function poll(){
     fetch('/get_locations')
-      .then(response => response.json())
-      .then(data => {
+    .then(r=>r.json())
+    .then(data=>{
+      let inside=0, outside=0;
+      const insideIds=new Set();
 
-        var insideCount = 0;
-        var outsideCount = 0;
+      data.forEach(s=>{
+        const id=s.student_id, pos=L.latLng(s.latitude,s.longitude);
+        if(!s.inside_campus){ outside++; removeStudent(id); return; }
+        inside++; insideIds.add(id);
 
-        data.forEach(student => {
-
-          var isInside = student.inside_campus;
-          var newLatLng = L.latLng(student.latitude, student.longitude);
-
-          if (isInside) insideCount++;
-          else outsideCount++;
-
-          var arrowIcon = L.divIcon({
-            html: `<div style="
-              width:0;
-              height:0;
-              border-left:10px solid transparent;
-              border-right:10px solid transparent;
-              border-bottom:20px solid ${isInside ? '#28a745' : '#dc3545'};
-              filter: drop-shadow(0 0 5px rgba(0,0,0,0.5));
-            "></div>`,
-            className: "",
-            iconSize: [20, 20]
-          });
-
-          if (markers[student.student_id]) {
-
-            var oldLatLng = markers[student.student_id].getLatLng();
-            var angle = getAngle(oldLatLng, newLatLng);
-
-            markers[student.student_id]
-              .setIcon(arrowIcon)
-              .setRotationAngle(angle);
-
-            animateMarker(markers[student.student_id], newLatLng);
-
-            // Add to trail path
-            paths[student.student_id].addLatLng(newLatLng);
-
-          } else {
-
-            markers[student.student_id] = L.marker(newLatLng, {
-              icon: arrowIcon,
-              rotationAngle: 0
-            }).addTo(map);
-
-            paths[student.student_id] = L.polyline([newLatLng], {
-              color: isInside ? "green" : "red",
-              weight: 3
-            }).addTo(map);
+        if(markers[id]){
+          const old=markers[id].getLatLng();
+          const dist=old.distanceTo(pos);
+          if(dist>0.5){
+            markers[id].setRotationAngle(heading(old,pos));
+            smoothMove(markers[id],pos);
+            trailPts[id].push(pos);
+            if(trailPts[id].length>TRAIL_MAX) trailPts[id].shift();
+            paths[id].setLatLngs(trailPts[id]);
           }
+        } else {
+          markers[id]=L.marker(pos,{
+            icon:arrowIcon(), rotationAngle:0,
+            rotationOrigin:'center center', zIndexOffset:500
+          }).addTo(map);
+          trailPts[id]=[pos];
+          paths[id]=L.polyline([pos],{color:'#22c55e',weight:2.5,opacity:0.5}).addTo(map);
+        }
 
-          markers[student.student_id]
-            .bindPopup(
-              `<b>Student ID:</b> ${student.student_id}<br>
-               <b>Status:</b> ${
-                 isInside
-                   ? "<span style='color:green;'>Inside Campus</span>"
-                   : "<span style='color:red;'>Outside Campus</span>"
-               }`
-            );
-        });
+        markers[id].bindPopup(
+          `<b style="color:#22c55e">Inside Campus</b><br>
+           <span style="color:#94a3b8;font-size:12px">Student ID </span><b>${id}</b><br>
+           <span style="color:#94a3b8;font-size:12px">Lat </span><b>${s.latitude.toFixed(6)}</b><br>
+           <span style="color:#94a3b8;font-size:12px">Lng </span><b>${s.longitude.toFixed(6)}</b>`
+        );
+      });
 
-        document.getElementById("insideCount").innerText = insideCount;
-        document.getElementById("outsideCount").innerText = outsideCount;
+      Object.keys(markers).forEach(id=>{ if(!insideIds.has(id)) removeStudent(id); });
 
-      })
-      .catch(error => console.log("Error:", error));
+      document.getElementById('insideCount').textContent=inside;
+      document.getElementById('outsideCount').textContent=outside;
+      document.getElementById('lastUpdate').textContent='Updated '+new Date().toLocaleTimeString();
+    })
+    .catch(()=>{ document.getElementById('lastUpdate').textContent='Reconnecting...'; });
   }
 
-  //////////////////////////////////////////////////////
-  // 🚀 Start Tracking
-  //////////////////////////////////////////////////////
-
-  loadLocations();
-  setInterval(loadLocations, 1000);
-
+  poll();
+  setInterval(poll, POLL_MS);
 </script>
-
 </body>
 </html>
