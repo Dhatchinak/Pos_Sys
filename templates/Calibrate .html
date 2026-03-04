@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>BHC — GPS Calibration</title>
+  <meta charset="utf-8"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:Arial,sans-serif;background:#0a0f1e;color:white;}
+    #map{height:100vh;width:100vw;}
+
+    .panel{
+      position:absolute;top:12px;left:12px;z-index:1000;
+      background:rgba(10,15,30,0.96);border:1px solid rgba(255,255,255,0.12);
+      border-radius:14px;padding:16px;width:290px;backdrop-filter:blur(12px);
+    }
+    .panel h3{color:#22c55e;margin-bottom:8px;font-size:15px;}
+    .panel p{color:#94a3b8;font-size:12px;margin-bottom:12px;line-height:1.6;}
+
+    .card{
+      background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);
+      border-radius:10px;padding:12px;margin-bottom:10px;
+    }
+    .card-title{font-size:11px;color:#64748b;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.08em;}
+    .coord{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;}
+    .coord.green{color:#22c55e;}
+    .coord.red{color:#ef4444;}
+    .coord.blue{color:#60a5fa;}
+
+    .status{
+      padding:8px 12px;border-radius:8px;font-size:12px;
+      font-weight:600;text-align:center;margin-bottom:10px;
+    }
+    .status.inside {background:rgba(34,197,94,0.15); color:#22c55e;}
+    .status.outside{background:rgba(239,68,68,0.15);  color:#ef4444;}
+
+    .students{max-height:200px;overflow-y:auto;}
+    .s-row{padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:12px;}
+    .s-row:last-child{border:none;}
+    .s-id{font-weight:700;}
+    .s-lat{color:#94a3b8;font-size:11px;}
+    .badge{display:inline-block;padding:1px 6px;border-radius:10px;font-size:10px;font-weight:700;margin-left:6px;}
+    .in {background:rgba(34,197,94,0.2);color:#22c55e;}
+    .out{background:rgba(239,68,68,0.2); color:#ef4444;}
+
+    #copyBtn{
+      width:100%;padding:9px;border-radius:8px;border:none;cursor:pointer;
+      background:#22c55e;color:black;font-weight:700;font-size:13px;
+      margin-top:6px;
+    }
+    #copyBtn:hover{background:#16a34a;}
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <h3>🛠 GPS Calibration Tool</h3>
+  <p>Shows ALL students on map — green dot = GPS received, red/green ring = inside/outside polygon. Use this to find where your GPS lands vs the campus boundary.</p>
+
+  <div class="card">
+    <div class="card-title">Your GPS (latest student)</div>
+    <div class="coord green" id="dispLat">—</div>
+    <div class="coord blue"  id="dispLng">—</div>
+    <div id="insideStatus" class="status outside" style="margin-top:8px;">Waiting for data...</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">All Students on DB</div>
+    <div class="students" id="studentRows">
+      <div class="s-row" style="color:#64748b">No data yet. Open Flutter app.</div>
+    </div>
+  </div>
+
+  <button id="copyBtn" onclick="copyCoords()">📋 Copy My Coords for Fix</button>
+</div>
+
+<script>
+  // ── MAP — satellite + streets so you can see campus clearly ──
+  const map = L.map('map').setView([10.8150, 78.6855], 18);
+
+  // Satellite layer so you can see actual buildings
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+    attribution:'© Esri Satellite',maxZoom:20
+  }).addTo(map);
+
+  // Street label overlay on top of satellite
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',{
+    attribution:'© CARTO',maxZoom:20,subdomains:'abcd',opacity:0.7
+  }).addTo(map);
+
+  // ── Current polygon (may be wrong) ─────────────────────
+  const BOUNDS=[
+    [10.816112,78.673231],[10.816724,78.673584],[10.817008,78.674302],
+    [10.816893,78.675114],[10.816221,78.675643],[10.815339,78.675721],
+    [10.814601,78.675480],[10.813975,78.674942],[10.813621,78.674141],
+    [10.813852,78.673402],[10.814734,78.673063],[10.815623,78.673098],
+  ];
+  L.polygon(BOUNDS,{
+    color:'#22c55e',fillColor:'#22c55e',
+    fillOpacity:0.1,weight:3,dashArray:'6 4'
+  }).addTo(map).bindTooltip('Current campus boundary',{permanent:false});
+
+  const markers={};
+  let lastLat=null, lastLng=null;
+
+  function poll(){
+    fetch('/get_locations')
+    .then(r=>r.json())
+    .then(data=>{
+      if(!data.length) return;
+
+      let rows='';
+      data.forEach(s=>{
+        const id=s.student_id;
+        const lat=s.latitude;
+        const lng=s.longitude;
+        const inside=s.inside_campus;
+        const pos=L.latLng(lat,lng);
+        const col=inside?'#22c55e':'#ef4444';
+
+        // ── Show ALL students on map ──
+        if(markers[id]){
+          markers[id].setLatLng(pos);
+        } else {
+          // Big visible circle so you can see exactly where GPS lands
+          markers[id]=L.circleMarker(pos,{
+            radius:12,
+            color:'white',weight:2,
+            fillColor:col,fillOpacity:0.85
+          }).addTo(map)
+           .bindPopup(`<b>${id}</b><br>Lat: ${lat.toFixed(7)}<br>Lng: ${lng.toFixed(7)}<br><b style="color:${col}">${inside?'INSIDE':'OUTSIDE'}</b>`);
+        }
+        markers[id].setStyle({fillColor:col});
+
+        // Update last coords panel
+        lastLat=lat; lastLng=lng;
+        document.getElementById('dispLat').textContent='Lat: '+lat.toFixed(7);
+        document.getElementById('dispLng').textContent='Lng: '+lng.toFixed(7);
+
+        const el=document.getElementById('insideStatus');
+        el.textContent = inside ? '✅ INSIDE Campus' : '❌ OUTSIDE Campus — polygon needs fixing!';
+        el.className='status '+(inside?'inside':'outside');
+
+        rows+=`<div class="s-row">
+          <span class="s-id">${id}</span>
+          <span class="badge ${inside?'in':'out'}">${inside?'IN':'OUT'}</span><br>
+          <span class="s-lat">${lat.toFixed(6)}, ${lng.toFixed(6)}</span>
+        </div>`;
+      });
+
+      document.getElementById('studentRows').innerHTML=rows;
+
+      // Pan to latest student automatically
+      if(lastLat) map.panTo([lastLat,lastLng],{animate:true});
+    })
+    .catch(()=>{});
+  }
+
+  function copyCoords(){
+    if(!lastLat){alert('No GPS data yet. Open the Flutter app first!');return;}
+    const text=`My GPS: Lat=${lastLat.toFixed(7)}, Lng=${lastLng.toFixed(7)}\nShare this with Claude to fix the campus polygon.`;
+    navigator.clipboard.writeText(text).then(()=>{
+      document.getElementById('copyBtn').textContent='✅ Copied!';
+      setTimeout(()=>{document.getElementById('copyBtn').textContent='📋 Copy My Coords for Fix';},2000);
+    });
+  }
+
+  poll();
+  setInterval(poll,1500);
+</script>
+</body>
+</html>
