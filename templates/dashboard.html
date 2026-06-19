@@ -66,6 +66,7 @@
     .s-name{color:white;font-size:13px;font-weight:600;}
     .s-coords{color:#64748b;font-size:10px;margin-top:2px;}
     .s-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(34,197,94,0.15);color:#22c55e;}
+    .s-badge-out{background:rgba(239,68,68,0.15);color:#ef4444;}
     .hud-time{
       background:rgba(10,15,30,0.82);border:1px solid rgba(255,255,255,0.06);
       border-radius:10px;padding:7px 12px;font-size:11px;
@@ -96,8 +97,8 @@
     </div>
   </div>
   <div class="student-list">
-    <div class="list-title">📍 Inside Students</div>
-    <div id="studentList"><div class="empty-note">No students inside campus</div></div>
+    <div class="list-title">📍 Tracked Students</div>
+    <div id="studentList"><div class="empty-note">No students tracked</div></div>
   </div>
   <div class="hud-time" id="lastUpdate">Connecting...</div>
 </div>
@@ -126,84 +127,64 @@
   const markers   = {};   // id → L.marker
   const paths     = {};   // id → L.polyline
   const trailPts  = {};   // id → LatLng[]
-  const angles    = {};   // id → current angle (degrees)
+  const statusOf  = {};   // id → last known inside_campus bool
   const anims     = {};   // id → animation frame id
 
   const TRAIL_MAX = 50;
   const POLL_MS   = 800;
   const ANIM_DUR  = 700;  // ms — matches smooth move duration
 
-  // ── ARROW ICON ────────────────────────────────────────
-  // Plain arrow pointing UP (north) — rotation handles direction
-  function arrowIcon(){
+  // ── STUDENT ICON ──────────────────────────────────────
+  // Graduation-cap pin — green when inside campus, red when outside
+  function studentIcon(isInside){
+    const color = isInside ? '#22c55e' : '#ef4444';
+    const glowId = isInside ? 'glowG' : 'glowR';
     return L.divIcon({
-      className:'', iconSize:[26,26], iconAnchor:[13,13],
-      html:`<svg width="26" height="26" viewBox="0 0 26 26" xmlns="http://www.w3.org/2000/svg">
+      className:'', iconSize:[30,30], iconAnchor:[15,28],
+      html:`<svg width="30" height="30" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg">
         <defs>
-          <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-            <feGaussianBlur stdDeviation="2.5" result="blur"/>
-            <feMerge>
-              <feMergeNode in="blur"/>
-              <feMergeNode in="SourceGraphic"/>
-            </feMerge>
+          <filter id="${glowId}" x="-60%" y="-60%" width="220%" height="220%">
+            <feGaussianBlur stdDeviation="2" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
           </filter>
         </defs>
-        <polygon
-          points="13,2 22,22 13,16 4,22"
-          fill="#22c55e" stroke="#ffffff" stroke-width="1.5"
-          stroke-linejoin="round" filter="url(#glow)"/>
+        <!-- pin body -->
+        <path d="M15 28C15 28 24 18.5 24 12C24 6.5 20 2 15 2C10 2 6 6.5 6 12C6 18.5 15 28 15 28Z"
+          fill="${color}" stroke="#ffffff" stroke-width="1.5" filter="url(#${glowId})"/>
+        <!-- inner circle -->
+        <circle cx="15" cy="12" r="7.2" fill="#ffffff"/>
+        <!-- graduation cap glyph -->
+        <g transform="translate(15,12)">
+          <path d="M0 -4.3L6.4 -1.3L0 1.7L-6.4 -1.3Z" fill="${color}"/>
+          <path d="M-3.6 0.2V3.2C-3.6 4.3 -1.9 5.2 0 5.2C1.9 5.2 3.6 4.3 3.6 3.2V0.2L0 1.9Z" fill="${color}"/>
+          <line x1="6.4" y1="-1.3" x2="6.4" y2="2.5" stroke="${color}" stroke-width="0.9" stroke-linecap="round"/>
+        </g>
       </svg>`
     });
   }
 
-  // ── HEADING: angle from point a → b in degrees ───────
-  function heading(a, b){
-    // atan2 gives angle from east; convert to compass bearing from north
-    const dy = b.lat - a.lat;
-    const dx = b.lng - a.lng;
-    // bearing: 0=north, 90=east, 180=south, 270=west
-    let deg = Math.atan2(dx, dy) * 180 / Math.PI;
-    return (deg + 360) % 360;
-  }
-
-  // ── SHORTEST angular path between two angles ─────────
-  function shortestAngleDiff(from, to){
-    let diff = (to - from + 360) % 360;
-    if(diff > 180) diff -= 360;
-    return diff;
-  }
-
-  // ── SMOOTH MOVE + SMOOTH ROTATE simultaneously ────────
-  function animateMarker(id, toLatLng, toAngle){
+  // ── SMOOTH MOVE ────────────────────────────────────────
+  function animateMarker(id, toLatLng){
     // Cancel any ongoing animation for this marker
     if(anims[id]) cancelAnimationFrame(anims[id]);
 
-    const marker   = markers[id];
-    const fromPos  = marker.getLatLng();
-    const fromAngle = angles[id] || 0;
-    const angleDiff = shortestAngleDiff(fromAngle, toAngle);
+    const marker  = markers[id];
+    const fromPos = marker.getLatLng();
     const t0 = performance.now();
 
     function step(now){
       const p  = Math.min((now - t0) / ANIM_DUR, 1);
       const ep = 1 - Math.pow(1 - p, 3);   // ease-out-cubic
 
-      // — Position lerp —
       marker.setLatLng([
         fromPos.lat + (toLatLng.lat - fromPos.lat) * ep,
         fromPos.lng + (toLatLng.lng - fromPos.lng) * ep,
       ]);
 
-      // — Angle lerp (shortest path) —
-      const currentAngle = fromAngle + angleDiff * ep;
-      marker.setRotationAngle(currentAngle);
-      angles[id] = currentAngle;
-
       if(p < 1){
         anims[id] = requestAnimationFrame(step);
       } else {
-        angles[id] = toAngle;   // snap to exact final angle
-        anims[id]  = null;
+        anims[id] = null;
       }
     }
 
@@ -216,7 +197,7 @@
     if(markers[id]) { map.removeLayer(markers[id]);    delete markers[id]; }
     if(paths[id])   { map.removeLayer(paths[id]);      delete paths[id];  }
     delete trailPts[id];
-    delete angles[id];
+    delete statusOf[id];
   }
 
   // ── POLL LOOP ─────────────────────────────────────────
@@ -225,57 +206,58 @@
     .then(r => r.json())
     .then(data => {
       let inside = 0, outside = 0;
-      const insideIds = new Set();
+      const seenIds = new Set();
       let listHTML = '';
 
       data.forEach(s => {
-        const id  = s.student_id;
-        const pos = L.latLng(s.latitude, s.longitude);
+        const id       = s.student_id;
+        const pos      = L.latLng(s.latitude, s.longitude);
+        const isInside = !!s.inside_campus;
 
-        // — Outside: count only, remove marker —
-        if(!s.inside_campus){
-          outside++;
-          removeStudent(id);
-          return;
-        }
-
-        inside++;
-        insideIds.add(id);
+        if(isInside) inside++; else outside++;
+        seenIds.add(id);
 
         if(markers[id]){
-          // — Existing marker: animate move + rotate —
+          // — Existing marker: animate move, refresh icon color if status changed —
           const old  = markers[id].getLatLng();
           const dist = old.distanceTo(pos);
 
           if(dist > 0.5){   // ignore GPS jitter < 0.5 m
-            const newAngle = heading(old, pos);
-            animateMarker(id, pos, newAngle);
+            animateMarker(id, pos);
 
-            // Extend trail
-            trailPts[id].push(pos);
-            if(trailPts[id].length > TRAIL_MAX) trailPts[id].shift();
-            paths[id].setLatLngs(trailPts[id]);
+            if(isInside){
+              trailPts[id].push(pos);
+              if(trailPts[id].length > TRAIL_MAX) trailPts[id].shift();
+              paths[id].setLatLngs(trailPts[id]);
+            }
+          }
+
+          if(statusOf[id] !== isInside){
+            markers[id].setIcon(studentIcon(isInside));
+            paths[id].setStyle({color: isInside ? '#22c55e' : '#ef4444'});
+            statusOf[id] = isInside;
           }
 
         } else {
           // — New student: place marker —
-          angles[id]  = 0;
           markers[id] = L.marker(pos, {
-            icon: arrowIcon(),
-            rotationAngle: 0,
-            rotationOrigin: 'center center',
+            icon: studentIcon(isInside),
             zIndexOffset: 500
           }).addTo(map);
+          statusOf[id] = isInside;
 
           trailPts[id] = [pos];
           paths[id] = L.polyline([pos], {
-            color:'#22c55e', weight:2.5, opacity:0.5
+            color: isInside ? '#22c55e' : '#ef4444', weight:2.5, opacity:0.5
           }).addTo(map);
         }
 
         // Popup (click marker to see details)
+        const statusLabel = isInside
+          ? '<b style="color:#22c55e">✅ Inside Campus</b>'
+          : '<b style="color:#ef4444">⛔ Outside Campus</b>';
         markers[id].bindPopup(
-          `<b style="color:#22c55e">✅ Inside Campus</b><br>
+          `${statusLabel}<br>
            <span style="color:#94a3b8;font-size:12px">Student ID </span>
            <b>${id}</b><br>
            <span style="color:#94a3b8;font-size:12px">Lat </span>
@@ -291,19 +273,19 @@
               <div class="s-name">${id}</div>
               <div class="s-coords">${s.latitude.toFixed(5)}, ${s.longitude.toFixed(5)}</div>
             </div>
-            <span class="s-badge">Inside</span>
+            <span class="s-badge ${isInside ? '' : 's-badge-out'}">${isInside ? 'Inside' : 'Outside'}</span>
           </div>`;
       });
 
-      // Remove stale markers
+      // Remove markers for students no longer reported at all
       Object.keys(markers).forEach(id => {
-        if(!insideIds.has(id)) removeStudent(id);
+        if(!seenIds.has(id)) removeStudent(id);
       });
 
       document.getElementById('insideCount').textContent  = inside;
       document.getElementById('outsideCount').textContent = outside;
       document.getElementById('studentList').innerHTML    =
-        listHTML || '<div class="empty-note">No students inside campus</div>';
+        listHTML || '<div class="empty-note">No students tracked</div>';
       document.getElementById('lastUpdate').textContent   =
         'Updated ' + new Date().toLocaleTimeString();
     })
